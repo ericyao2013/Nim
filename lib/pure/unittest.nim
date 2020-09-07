@@ -476,12 +476,16 @@ template suite*(name, body) {.dirty.} =
     let testSuiteName {.used.} = name
 
     ensureInitialized()
-    try:
-      for formatter in formatters:
-        formatter.suiteStarted(name)
-      body
-    finally:
-      suiteEnded()
+
+    proc runSuite() =
+      try:
+        for formatter in formatters:
+          formatter.suiteStarted(name)
+        body
+      finally:
+        suiteEnded()
+
+    runSuite()
 
 template exceptionTypeName(e: typed): string = $e.name
 
@@ -504,35 +508,38 @@ template test*(name, body) {.dirty.} =
   ensureInitialized()
 
   if shouldRun(when declared(testSuiteName): testSuiteName else: "", name):
-    checkpoints = @[]
-    var testStatusIMPL {.inject.} = TestStatus.OK
-
-    for formatter in formatters:
-      formatter.testStarted(name)
-
-    try:
-      when declared(testSetupIMPLFlag): testSetupIMPL()
-      when declared(testTeardownIMPLFlag):
-        defer: testTeardownIMPL()
-      body
-
-    except:
-      let e = getCurrentException()
-      let eTypeDesc = "[" & exceptionTypeName(e) & "]"
-      checkpoint("Unhandled exception: " & getCurrentExceptionMsg() & " " & eTypeDesc)
-      var stackTrace {.inject.} = e.getStackTrace()
-      fail()
-
-    finally:
-      if testStatusIMPL == TestStatus.FAILED:
-        setProgramResult 1
-      let testResult = TestResult(
-        suiteName: when declared(testSuiteName): testSuiteName else: "",
-        testName: name,
-        status: testStatusIMPL
-      )
-      testEnded(testResult)
+    proc runTest() =
       checkpoints = @[]
+      var testStatusIMPL {.inject.} = TestStatus.OK
+
+      for formatter in formatters:
+        formatter.testStarted(name)
+
+      try:
+        when declared(testSetupIMPLFlag): testSetupIMPL()
+        when declared(testTeardownIMPLFlag):
+          defer: testTeardownIMPL()
+        body
+
+      except:
+        let e = getCurrentException()
+        let eTypeDesc = "[" & exceptionTypeName(e) & "]"
+        checkpoint("Unhandled exception: " & getCurrentExceptionMsg() & " " & eTypeDesc)
+        var stackTrace {.inject.} = e.getStackTrace()
+        fail()
+
+      finally:
+        if testStatusIMPL == TestStatus.FAILED:
+          setProgramResult 1
+        let testResult = TestResult(
+          suiteName: when declared(testSuiteName): testSuiteName else: "",
+          testName: name,
+          status: testStatusIMPL
+        )
+        testEnded(testResult)
+        checkpoints = @[]
+
+    runTest()
 
 proc checkpoint*(msg: string) =
   ## Set a checkpoint identified by `msg`. Upon test failure all
